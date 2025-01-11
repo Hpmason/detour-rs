@@ -155,3 +155,54 @@ mod args_42 {
     Ok(())
   }
 }
+
+#[cfg(target_arch="x86_64")]
+mod relative_ip {
+  use std::arch::global_asm;
+  use super::*;
+  use retour::GenericDetour;
+
+  static VALUE: i32 = 3;
+
+  global_asm!(r#"
+      .global check_value
+      check_value:
+        cmp  dword ptr [rip - {value}], 5   // 83 3D XX XX XX XX 05 // XX - displacement bytes
+        setz al                             // 0F 94 C0
+        and  al, 1                          // 24 01
+        ret                                 // C3
+    "#,
+    value = sym VALUE,
+  );
+
+  type FnCheckValue = extern "C" fn() -> bool;
+
+  unsafe extern "C" {
+    safe fn check_value() -> bool;
+  }
+
+  extern fn new_check_value() -> bool {
+    true
+  }
+
+  #[test]
+  fn test() -> Result<()> {
+    unsafe {
+      let hook = GenericDetour::<FnCheckValue>::new(check_value, new_check_value)
+        .expect("target or source is not usable for detouring");
+
+      assert_eq!(check_value(), false);
+      assert_eq!(hook.call(), false);
+      hook.enable()?;
+      {
+        assert_eq!(hook.call(), false);
+        assert_eq!(check_value(), true);
+      }
+      hook.disable()?;
+      assert_eq!(hook.call(), false);
+      assert_eq!(check_value(), false);
+    }
+
+    Ok(())
+  }
+}
